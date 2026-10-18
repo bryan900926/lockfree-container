@@ -27,15 +27,13 @@ void test_hazard_pointer_collection() {
   // STEP 1: Thread A reads the resource and sets a hazard pointer
   // ---------------------------------------------------------
   auto *record = hp_manager.acquire_record();
-  record->ptr.store(resource, std::memory_order_release);
+  hp::ThreadHpOwner::get_thread_hp_owner().protect(resource);
 
   // ---------------------------------------------------------
   // STEP 2: Thread B removes the resource from the main data
   // structure and retires it
   // ---------------------------------------------------------
   std::vector<RetiredNode> retired_list;
-  // Assuming RetiredNode has a constructor like {void* ptr,
-  // void(*deleter)(void*)}
   retired_list.push_back({resource, dummy_deleter});
   hp_manager.adopt_orphans(std::move(retired_list));
 
@@ -45,8 +43,8 @@ void test_hazard_pointer_collection() {
   hp_manager.scan_orphans();
 
   // VERIFY: The resource is protected by the hazard pointer
-  assert(delete_count.load() == 0 &&
-         "Resource should NOT be deleted while HP is active!");
+  RELEASE_ASSERT(delete_count.load() == 0,
+                 "Resource should NOT be deleted while HP is active!");
 
   // ---------------------------------------------------------
   // STEP 4: Thread A is done and releases the hazard pointer

@@ -13,7 +13,7 @@ void test_hazard_pointer_dangling() {
 
   // WRITER: Continuously swaps the shared pointer with a new one
   auto writer_td = [&shared_ptr]() {
-    const int num_op{1000};
+    const int num_op{100000};
     for (int i{}; i < num_op; ++i) {
       int *new_ptr = new int(i);
 
@@ -53,7 +53,6 @@ void test_hazard_pointer_dangling() {
         // If it did, loop around and try again.
       } while (safe_ptr != shared_ptr.load(std::memory_order_acquire));
 
-      // NOW IT IS SAFE TO READ!
       // If your HP framework is broken, the next line will sporadically
       // segfault (use-after-free) because the writer thread would have already
       // deleted it.

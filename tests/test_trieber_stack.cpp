@@ -1,9 +1,11 @@
-#include "../TreiberStack.hpp"
 #include <cassert>
 #include <iostream>
 #include <ostream>
 #include <thread>
 #include <vector>
+
+#include "../TreiberStack.hpp"
+#include "../macro.hpp"
 
 struct Dummydata {
   int i1 = -1;
@@ -65,11 +67,7 @@ void test_trieber_stack() {
     }
   }
   Dummydata data;
-  bool f = stk.pop(data);
-  if (f) {
-    std::cout << "[Fail] test_trieber_stack()\n";
-    return;
-  }
-  assert(!f && "[Fail] test_trieber_stack()\n");
+  //  stack should be empty since same writer and reader
+  RELEASE_ASSERT(!stk.pop(data), "[Fail] test_trieber_sta k()\n");
   std::cout << "[Success] test_trieber_stack()\n";
 }
