@@ -1,0 +1,77 @@
+#include "hp/HpManager.hpp"
+
+#include <atomic>
+#include <type_traits>
+
+#pragma once
+
+namespace yao_lf {
+template <typename T> class TrieberStack {
+  static_assert(std::is_copy_constructible_v<T> && std::is_copy_assignable_v<T>,
+                "T must be copyable!!");
+
+private:
+  struct Node {
+    T data;
+    Node *next = nullptr;
+    Node(const T &data) : data(data) {}
+  };
+
+  std::atomic<Node *> head{nullptr};
+
+public:
+  void push(const T &data) {
+    Node *new_node = new Node(data);
+    new_node->next = head.load();
+    while (!head.compare_exchange_weak(new_node->next, new_node,
+                                       std::memory_order_release,
+                                       std::memory_order_relaxed))
+      ;
+  }
+  bool pop(T &data) {
+    hp::ThreadHpOwner &hp_owner = hp::ThreadHpOwner::get_thread_hp_owner();
+
+    Node *old_head = head.load(std::memory_order_relaxed);
+
+    while (true) {
+      // stack is empty
+      if (old_head == nullptr) {
+        return false;
+      }
+
+      hp_owner.protect(old_head);
+
+      // if this condition triggered, other thread might delete this node
+      if (head.load(std::memory_order_acquire) != old_head) {
+        old_head = head.load(std::memory_order_relaxed);
+        continue;
+      }
+
+      Node *next_node = old_head->next;
+
+      if (head.compare_exchange_weak(old_head, next_node,
+                                     std::memory_order_release,
+                                     std::memory_order_relaxed)) {
+        break;
+      }
+    }
+    // memory resource reclaimed
+    try {
+      // copy might throw ex
+      data = old_head->data;
+    } catch (...) {
+      hp_owner.clear();
+      hp::retire(old_head);
+      throw;
+    }
+    hp_owner.clear();
+    hp::retire(old_head);
+    return true;
+  }
+  ~TrieberStack() {
+    T dummy;
+    while (pop(dummy))
+      ;
+  }
+};
+} // namespace yao_lf
