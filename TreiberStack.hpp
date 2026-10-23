@@ -22,12 +22,13 @@ private:
 public:
   void push(const T &data) {
     Node *new_node = new Node(data);
-    new_node->next = head.load();
+    new_node->next = head.load(std::memory_order_relaxed);
     while (!head.compare_exchange_weak(new_node->next, new_node,
                                        std::memory_order_release,
                                        std::memory_order_relaxed))
       ;
   }
+
   bool pop(T &data) {
     hp::ThreadHpOwner &hp_owner = hp::ThreadHpOwner::get_thread_hp_owner();
 
@@ -55,23 +56,32 @@ public:
         break;
       }
     }
+
     // memory resource reclaimed
     try {
       // copy might throw ex
       data = old_head->data;
     } catch (...) {
       hp_owner.clear();
+      // let hazard pointer to collect the memory
       hp::retire(old_head);
       throw;
     }
+
     hp_owner.clear();
     hp::retire(old_head);
+
     return true;
   }
+
+  // delete the Node resource created by push
   ~TrieberStack() {
-    T dummy;
-    while (pop(dummy))
-      ;
+    Node *current = head.load(std::memory_order_relaxed);
+    while (current != nullptr) {
+      Node *next = current->next;
+      delete current;
+      current = next;
+    }
   }
 };
 } // namespace yao_lf
