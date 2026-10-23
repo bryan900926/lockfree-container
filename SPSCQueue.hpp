@@ -35,6 +35,20 @@ public:
     head_block_ = initial_block;
     tail_block_ = initial_block;
   }
+  ~SPSCQueue() {
+    // 1. Delete active blocks in the queue
+    for (Block *cur = head_block_; cur;) {
+      auto next = cur->next.load(std::memory_order_relaxed);
+      delete cur;
+      cur = next;
+    }
+
+    // 2. Delete the actual Block objects stored inside the stack
+    Block *cached_block = nullptr;
+    while (free_blocks_.pop(cached_block)) {
+      delete cached_block; // <--- This reclaims the type T (the Block itself)
+    }
+  }
   // only one writer thread would use this function
   void push(const T &data) {
     size_t cur_tail = tail_block_->tail.load(std::memory_order_relaxed);
@@ -66,6 +80,7 @@ public:
     // If consumer has exhausted this block
     if (cur_head == BLOCK_SIZE) {
       Block *next_block = head_block_->next.load(std::memory_order_acquire);
+
       if (!next_block) {
         return false; // Producer hasn't linked the new block yet
       }
