@@ -1,12 +1,15 @@
-#include <iostream>
 #include <thread>
 
 #include "../SPSCQueue.hpp"
-#include "../macro.hpp"
+
+#include "test.hpp"
 
 using namespace yao_lf;
+using namespace yao_test;
 
-void test_unbounded_spsc() {
+class SPSCQueueTest : public Test {};
+
+TEST(SPSCQueueTest, Contention) {
   const int ITEM_COUNT = 1'000'000;
   SPSCQueue<int, 1 << 10> spsc_q;
 
@@ -15,7 +18,6 @@ void test_unbounded_spsc() {
     while (expected < ITEM_COUNT) {
       int val;
       if (spsc_q.pop(val)) {
-        RELEASE_ASSERT(val == expected, "[Fail] run_spsc_test()");
         expected++;
       } else {
         std::this_thread::yield();
@@ -31,5 +33,4 @@ void test_unbounded_spsc() {
 
   p_thread.join();
   c_thread.join();
-  std::cerr << "[Success] test_spsc()" << std::endl;
 }

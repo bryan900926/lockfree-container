@@ -6,7 +6,7 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     message(STATUS "Setting build type to 'Debug' as none was specfied")
 endif()
 
-add_executable(test test_main.cpp test_hazard_pointer_collection.cpp test_hazard_pointer_dangling.cpp
+add_executable(test test_main.cpp test_hazard_pointer.cpp 
 test_trieber_stack.cpp test_unbounded_spsc.cpp)
 
 # Apply compiler flags ONLY in Debug mode

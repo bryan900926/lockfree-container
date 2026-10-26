@@ -1,11 +1,10 @@
 #include <cassert>
-#include <iostream>
-#include <ostream>
 #include <thread>
 #include <vector>
 
 #include "../TreiberStack.hpp"
-#include "../macro.hpp"
+#include "../memory/FreeListAllocator.hpp"
+#include "test.hpp"
 
 struct Dummydata {
   int i1 = -1;
@@ -13,9 +12,13 @@ struct Dummydata {
   long l3 = -1;
 };
 
-void test_trieber_stack() {
+using namespace yao_test;
+
+class TrieberTest : public Test {};
+
+TEST(TrieberTest, Contention) {
   using namespace yao_lf;
-  TrieberStack<Dummydata> stk;
+  TrieberStack<Dummydata, yao_mem::FreeListAllocator<Dummydata>> stk;
 
   const int write_op{100000};
   const int read_op{100000};
@@ -26,17 +29,6 @@ void test_trieber_stack() {
 
   std::vector<std::thread> readers;
   std::vector<std::thread> writers;
-
-  // 1. Spawn Writer Threads
-  for (int i = 0; i < num_writer_threads; ++i) {
-    writers.emplace_back(
-        [&, i]() { // capture 'i' by value for thread ID if needed
-          for (int j = 0; j < write_op; ++j) {
-            Dummydata data = {.i1 = j, .f2 = 9, .l3 = 6};
-            stk.push(data);
-          }
-        });
-  }
 
   // 2. Spawn Reader Threads
   for (int i = 0; i < num_reader_threads; ++i) {
@@ -53,6 +45,17 @@ void test_trieber_stack() {
     });
   }
 
+  // 1. Spawn Writer Threads
+  for (int i = 0; i < num_writer_threads; ++i) {
+    writers.emplace_back(
+        [&, i]() { // capture 'i' by value for thread ID if needed
+          for (int j = 0; j < write_op; ++j) {
+            Dummydata data = {.i1 = j, .f2 = 9, .l3 = 6};
+            stk.push(data);
+          }
+        });
+  }
+
   // 3. Wait for all writers to finish
   for (auto &t : writers) {
     if (t.joinable()) {
@@ -67,7 +70,6 @@ void test_trieber_stack() {
     }
   }
   Dummydata data;
-  //  stack should be empty since same writer and reader
-  RELEASE_ASSERT(!stk.pop(data), "[Fail] test_trieber_sta k()\n");
-  std::cout << "[Success] test_trieber_stack()\n";
+  // stack should be empty since same writer and reader
+  RELEASE_ASSERT(!stk.pop(data), "stack is not empty!!");
 }
