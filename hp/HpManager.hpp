@@ -1,5 +1,8 @@
+#include "../memory/StandardAllocator.hpp"
+
 #include <array>
 #include <atomic>
+#include <cstdio>
 #include <mutex>
 #include <stdexcept>
 #include <vector>
@@ -13,7 +16,7 @@ struct RetiredNode {
   void (*deleter)(void *);
 };
 
-class HpManager {
+template <typename T> class HpManager {
 public:
   struct HpRecord {
     std::atomic<bool> active{false};
@@ -69,12 +72,11 @@ public:
   }
 
   void scan(std::vector<RetiredNode> &nodes) const {
-    auto it = nodes.begin();
-    while (it != nodes.end()) {
+    for (auto it = nodes.begin(); it != nodes.end();) {
       if (is_hazard(it->ptr)) {
         it++;
       } else {
-        it->deleter(it->ptr);
+        it->deleter(std::move(it->ptr));
         it = nodes.erase(it);
       }
     }
@@ -90,7 +92,7 @@ public:
   ~HpManager() {
     std::lock_guard<std::mutex> lk(orphan_mutex_);
     for (auto &node : orphans_) {
-      node.deleter(node.ptr);
+      node.deleter(std::move(node.ptr));
     }
     orphans_.clear();
   }
@@ -114,30 +116,34 @@ private:
   }
 };
 
-class ThreadHpOwner {
+template <typename T> class ThreadHpOwner {
 public:
   static ThreadHpOwner &get_thread_hp_owner() {
     thread_local ThreadHpOwner hp_owner;
     return hp_owner;
   }
-  ~ThreadHpOwner() { HpManager::instance().release_record(record_); }
+  ~ThreadHpOwner() { clean(); }
   ThreadHpOwner &operator=(const ThreadHpOwner &) = delete;
   ThreadHpOwner(const ThreadHpOwner &) = delete;
   void protect(void *ptr) noexcept { record_->ptr.store(ptr); }
   void clear() noexcept { record_->ptr.store(nullptr); }
+  void clean() {
+    HpManager<T>::instance().release_record(record_);
+    clear();
+  }
 
 private:
-  HpManager::HpRecord *record_ = nullptr;
-  ThreadHpOwner() : record_(HpManager::instance().acquire_record()) {}
+  typename HpManager<T>::HpRecord *record_ = nullptr;
+  ThreadHpOwner() : record_(HpManager<T>::instance().acquire_record()) {}
 };
 
-class ThreadRetiredList {
+template <typename T> class ThreadRetiredList {
 public:
   ~ThreadRetiredList() {
     collect();
     // If nodes_ still contain occupied pointer, transfer these nodes to the
     // manager to do the later cleaning
-    HpManager::instance().adopt_orphans(std::move(nodes_));
+    HpManager<T>::instance().adopt_orphans(std::move(nodes_));
   }
   void push(RetiredNode node) {
     nodes_.push_back(node);
@@ -155,18 +161,15 @@ private:
   static const int SCAN_THRESHOLD = 64;
   void collect() {
     // First check any node is not used
-    HpManager::instance().scan(nodes_);
+    HpManager<T>::instance().scan(nodes_);
     // Ask mananger to do the cleaning
-    HpManager::instance().scan_orphans();
+    HpManager<T>::instance().scan_orphans();
   }
 };
 
-template <typename T> void delete_as(void *ptr) {
-  delete static_cast<T *>(ptr);
-}
-
-template <typename T> void retire(T *ptr) {
-  ThreadRetiredList::get_thread_retired_list().push(
-      RetiredNode{ptr, &delete_as<T>});
+template <typename T, typename Allocator = yao_mem::StandardAllocator<T>>
+void retire(void *ptr) {
+  ThreadRetiredList<T>::get_thread_retired_list().push(
+      RetiredNode{ptr, Allocator::disallocate});
 }
 } // namespace hp
