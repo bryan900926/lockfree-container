@@ -1,27 +1,33 @@
+#include "./memory/StandardAllocator.hpp"
 #include "hp/HpManager.hpp"
 
 #include <atomic>
+#include <memory>
 #include <type_traits>
 
 #pragma once
 
 namespace yao_lf {
-template <typename T> class TrieberStack {
+template <typename T, typename Allocator = yao_mem::StandardAllocator<T>>
+class TrieberStack {
   static_assert(std::is_copy_constructible_v<T> && std::is_copy_assignable_v<T>,
                 "T must be copyable!!");
 
 private:
   struct Node {
     T data;
-    Node *next = nullptr;
+    Node *next{nullptr};
+    Node() = default;
     Node(const T &data) : data(data) {}
   };
-
+  using NodeAllocator =
+      typename std::allocator_traits<Allocator>::template rebind_alloc<Node>;
   std::atomic<Node *> head{nullptr};
 
 public:
   void push(const T &data) {
-    Node *new_node = new Node(data);
+    Node *new_node = NodeAllocator::allocate();
+    new_node->data = data;
     new_node->next = head.load(std::memory_order_relaxed);
     while (!head.compare_exchange_weak(new_node->next, new_node,
                                        std::memory_order_release,
@@ -30,7 +36,8 @@ public:
   }
 
   bool pop(T &data) {
-    hp::ThreadHpOwner &hp_owner = hp::ThreadHpOwner::get_thread_hp_owner();
+    hp::ThreadHpOwner<T> &hp_owner =
+        hp::ThreadHpOwner<T>::get_thread_hp_owner();
 
     Node *old_head = head.load(std::memory_order_relaxed);
 
@@ -64,17 +71,17 @@ public:
     } catch (...) {
       hp_owner.clear();
       // let hazard pointer to collect the memory
-      hp::retire(old_head);
+      hp::retire<Node, NodeAllocator>(old_head);
       throw;
     }
 
     hp_owner.clear();
-    hp::retire(old_head);
+    hp::retire<Node, NodeAllocator>(old_head);
 
     return true;
   }
 
-  // delete the Node resource created by push
+  // delete the yao_mem::Node<T> resource created by push
   ~TrieberStack() {
     Node *current = head.load(std::memory_order_relaxed);
     while (current != nullptr) {
