@@ -2,13 +2,11 @@
 #include <cstddef>
 #include <cstdlib>
 #include <mutex>
-#include <utility>
 
 #pragma once
 
 namespace yao_mem {
 template <typename T, std::size_t CAP = 1024> class FreeListAllocator {
-
 public:
   using value_type = T;
 
@@ -16,15 +14,40 @@ public:
     using other = yao_mem::FreeListAllocator<U, CAP>;
   };
 
-  [[nodiscard]] static T *allocate() {
+  [[nodiscard]] T *allocate(std::size_t n = 1) {
+    if (n != 1) {
+      // FreeList only handles single objects. Fallback to OS for arrays.
+      return static_cast<T *>(::operator new(n * sizeof(T)));
+    }
     return FreeList::get_thread_allocator().allocate();
   }
-  static void disallocate(void *ptr) {
-    return FreeList::get_thread_allocator().disallocate(ptr);
+
+  void deallocate(T *ptr, std::size_t n = 1) {
+    if (!ptr)
+      return;
+    if (n != 1) {
+      ::operator delete(ptr);
+      return;
+    }
+    FreeList::get_thread_allocator().deallocate(ptr);
+  }
+
+  template <class U, class... Args> void construct(U *p, Args &&...args) {
+    ::new (static_cast<void *>(p)) U(std::forward<Args>(args)...);
+  }
+
+  template <class U> void destroy(U *p) { p->~U(); }
+
+  // deleter used when thread local freelist destroy first
+  void static fall_back_deleter(T *p) {
+    p->~T();
+    // Chunk has the same memory layout, so we can cast and raw delete
+    delete reinterpret_cast<typename FreeList::Chunk *>(p);
   }
 
 private:
   class FreeList {
+
   public:
     union Chunk {
       Chunk *next;
@@ -37,6 +60,15 @@ private:
     struct GlobalPool {
       std::mutex mtx;
       Chunk *head{nullptr};
+
+      ~GlobalPool() {
+        std::lock_guard<std::mutex> lg(mtx);
+        while (head) {
+          Chunk *next = head->next;
+          delete head;
+          head = next;
+        }
+      }
     };
 
     static GlobalPool &get_global_pool() {
@@ -52,6 +84,7 @@ private:
       while (head_) {
         Chunk *next = head_->next;
         delete head_;
+        count_--;
         head_ = next;
       }
     }
@@ -61,7 +94,7 @@ private:
       return fl;
     }
 
-    template <typename... Args> [[nodiscard]] T *allocate(Args &&...args) {
+    [[nodiscard]] T *allocate() {
       if (!head_) {
         // FAST PATH FAILED: Local list empty.
         // Try to steal a batch from the global pool.
@@ -90,16 +123,14 @@ private:
         // GLOBAL POOL ALSO EMPTY: Resort to OS allocation
         chunk = new Chunk;
       }
-      return new (&chunk->data) T(std::forward<Args>(args)...);
+      return reinterpret_cast<T *>(chunk);
     }
 
-    void disallocate(void *ptr) {
+    void deallocate(void *ptr) {
       if (!ptr)
         return;
 
-      auto deleted_ptr = static_cast<T *>(ptr);
-      deleted_ptr->~T();
-      Chunk *chunk = reinterpret_cast<Chunk *>(deleted_ptr);
+      Chunk *chunk = reinterpret_cast<Chunk *>(ptr);
 
       if (count_ >= CAP) {
         // FAST PATH FAILED: Local list full.
