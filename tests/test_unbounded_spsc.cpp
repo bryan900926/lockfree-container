@@ -9,7 +9,7 @@ using namespace yao_test;
 
 class SPSCQueueTest : public Test {};
 
-TEST(SPSCQueueTest, Contention) {
+TEST(SPSCQueueTest, Contention, true) {
   const int ITEM_COUNT = 1'000'000;
   SPSCQueue<int, 1 << 10> spsc_q;
 

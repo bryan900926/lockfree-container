@@ -22,7 +22,7 @@ void dummy_deleter(void *ptr) {
 
 class HazardPointerTest : public Test {};
 
-TEST(HazardPointerTest, Collection) {
+TEST(HazardPointerTest, Collection, true) {
   // Isolated counter for this specific test
   std::atomic<int> delete_count{0};
 
@@ -67,7 +67,7 @@ TEST(HazardPointerTest, Collection) {
   // VERIFY: The resource is now safely reclaimed
   RELEASE_ASSERT(delete_count.load() == 1, "resouce is not reclaimed\n");
 }
-TEST(HazardPointerTest, Dangling) {
+TEST(HazardPointerTest, Dangling, true) {
   static const int THREAD_CNT = 200;
 
   // 1. Must use a raw pointer in std::atomic

@@ -41,12 +41,16 @@ inline std::vector<TestCase> &get_test_registry() {
 }
 
 struct TestRegister {
-  TestRegister(const char *name, TestFactory factory) {
-    get_test_registry().push_back({name, factory});
+  TestRegister(const char *name, TestFactory factory, bool is_run) {
+    if (is_run)
+      get_test_registry().push_back({name, factory});
   }
 };
 
-#define TEST(FixtureName, TestName)                                            \
+#define TEST(FixtureName, TestName, is_run)                                    \
+  static_assert(std::is_same<decltype(is_run), bool>::value,                   \
+                "TEST macro error: The 'is_run' argument must strictly be a "  \
+                "bool (true or false).");                                      \
   class FixtureName##_##TestName : public FixtureName {                        \
   public:                                                                      \
     void run() override;                                                       \
@@ -55,7 +59,8 @@ struct TestRegister {
     return new FixtureName##_##TestName();                                     \
   }                                                                            \
   static TestRegister register_##FixtureName##_##TestName(                     \
-      #FixtureName "." #TestName, &Factory_##FixtureName##_##TestName);        \
+      #FixtureName "." #TestName, &Factory_##FixtureName##_##TestName,         \
+      is_run);                                                                 \
   void FixtureName##_##TestName::run()
 
 inline void test_all() {
