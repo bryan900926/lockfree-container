@@ -1,14 +1,13 @@
 #include <thread>
 
 #include "../TreiberStack.hpp"
+#include "../legacy/TreiberStack.hpp"
 #include "../memory/FreeListAllocator.hpp"
-#include "../memory/StandardAllocator.hpp"
 #include "benchmark.hpp"
 
-BENCHMARK(TrieberStack_std_allocator, true) {
-  using namespace yao_lf;
-  TrieberStack<int, yao_mem::StandardAllocator<int>> stk;
-
+BENCHMARK(TrieberStack_legacy, false) {
+  state.pause_timing();
+  yao_legacy::TrieberStack<int, yao_mem::StandardAllocator<int>> stk;
   const int write_op{1000000};
   const int read_op{1000000};
 
@@ -33,6 +32,8 @@ BENCHMARK(TrieberStack_std_allocator, true) {
       }
     });
   }
+
+  state.resume_timing();
 
   // 1. Spawn Writer Threads
   for (int i = 0; i < num_writer_threads; ++i) {
@@ -60,9 +61,10 @@ BENCHMARK(TrieberStack_std_allocator, true) {
   }
   int data;
 }
-BENCHMARK(TrieberStack_freeList_allocator, true) {
-  using namespace yao_lf;
-  TrieberStack<int, yao_mem::FreeListAllocator<int, 4096>> stk;
+BENCHMARK(TrieberStack_optimized, true) {
+  state.pause_timing();
+
+  yao_lf::TrieberStack<int, yao_mem::FreeListAllocator<int, 4096>> stk;
 
   const int write_op{1000000};
   const int read_op{1000000};
@@ -88,6 +90,8 @@ BENCHMARK(TrieberStack_freeList_allocator, true) {
       }
     });
   }
+
+  state.resume_timing();
 
   // 1. Spawn Writer Threads
   for (int i = 0; i < num_writer_threads; ++i) {

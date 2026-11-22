@@ -1,5 +1,6 @@
 #include "../memory/StandardAllocator.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -14,11 +15,12 @@ namespace hp {
 struct RetiredNode {
   void *ptr{nullptr};
   void (*deleter)(void *);
+  void (*fallback_deleter)(void *){nullptr};
 };
 
 template <typename T> class HpManager {
 public:
-  struct HpRecord {
+  struct alignas(64) HpRecord {
     std::atomic<bool> active{false};
     std::atomic<void *> ptr{nullptr};
   };
@@ -72,14 +74,33 @@ public:
   }
 
   void scan(std::vector<RetiredNode> &nodes) const {
-    for (auto it = nodes.begin(); it != nodes.end();) {
-      if (is_hazard(it->ptr)) {
-        it++;
-      } else {
-        it->deleter(std::move(it->ptr));
-        it = nodes.erase(it);
+    // 1. Gather active hazard pointers ONCE to avoid cache-line bouncing
+    std::vector<void *> active_hps;
+    active_hps.reserve(records_.size());
+    for (const auto &record : records_) {
+      if (record.active.load(std::memory_order_acquire)) {
+        if (void *ptr = record.ptr.load(std::memory_order_acquire); ptr) {
+          active_hps.push_back(ptr);
+        }
       }
     }
+
+    std::sort(active_hps.begin(), active_hps.end());
+
+    // 3. Filter nodes in a single O(N) pass without erasing/shifting memory
+    std::vector<RetiredNode> surviving_nodes;
+    surviving_nodes.reserve(nodes.size());
+
+    for (auto &node : nodes) {
+      if (std::binary_search(active_hps.begin(), active_hps.end(), node.ptr)) {
+        surviving_nodes.push_back(node); // Pointer still in use
+      } else {
+        node.deleter(node.ptr); // Safe to delete!
+      }
+    }
+
+    // 4. Replace the old list with the surviving nodes
+    nodes = std::move(surviving_nodes);
   }
 
   void adopt_orphans(std::vector<RetiredNode> &&nodes) {
@@ -92,9 +113,8 @@ public:
   ~HpManager() {
     std::lock_guard<std::mutex> lk(orphan_mutex_);
     for (auto &node : orphans_) {
-      node.deleter(std::move(node.ptr));
+      node.fallback_deleter(node.ptr);
     }
-    orphans_.clear();
   }
 
 private:
@@ -109,7 +129,8 @@ private:
       return false;
     }
     for (const auto &record : records_) {
-      if (record.active.load() && record.ptr.load() == ptr)
+      if (record.active.load(std::memory_order_relaxed) &&
+          record.ptr.load(std::memory_order_relaxed) == ptr)
         return true;
     }
     return false;
@@ -140,7 +161,6 @@ private:
 template <typename T> class ThreadRetiredList {
 public:
   ~ThreadRetiredList() {
-    collect();
     // If nodes_ still contain occupied pointer, transfer these nodes to the
     // manager to do the later cleaning
     HpManager<T>::instance().adopt_orphans(std::move(nodes_));
@@ -158,7 +178,7 @@ public:
 
 private:
   std::vector<RetiredNode> nodes_;
-  static const int SCAN_THRESHOLD = 64;
+  static const int SCAN_THRESHOLD = 128;
   void collect() {
     // First check any node is not used
     HpManager<T>::instance().scan(nodes_);
@@ -169,7 +189,26 @@ private:
 
 template <typename T, typename Allocator = yao_mem::StandardAllocator<T>>
 void retire(void *ptr) {
-  ThreadRetiredList<T>::get_thread_retired_list().push(
-      RetiredNode{ptr, Allocator::disallocate});
+  RetiredNode r_node;
+  r_node.ptr = ptr;
+
+  // A captureless lambda decays to a standard function pointer: void(*)(void*)
+  r_node.deleter = [](void *p) {
+    T *typed_ptr = static_cast<T *>(p);
+    Allocator alloc;
+
+    // 1. Destroy the object (call destructor)
+    std::allocator_traits<Allocator>::destroy(alloc, typed_ptr);
+
+    // 2. Deallocate memory (pass 1 as the count)
+    std::allocator_traits<Allocator>::deallocate(alloc, typed_ptr, 1);
+  };
+
+  r_node.fallback_deleter = [](void *p) {
+    T *typed_ptr = static_cast<T *>(p);
+    Allocator::fall_back_deleter(typed_ptr);
+  };
+
+  ThreadRetiredList<T>::get_thread_retired_list().push(r_node);
 }
 } // namespace hp

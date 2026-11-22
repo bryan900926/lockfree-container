@@ -1,4 +1,6 @@
 */bin
 */build
 */build_debug
-*/release
+release
+legacy
+perf*
